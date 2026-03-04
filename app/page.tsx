@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { EmotionOverlay } from "@/components/EmotionOverlay";
 import { CameraCapture } from "@/components/CameraCapture";
 import { FilterStrip, FilterId, FILTERS } from "@/components/FilterStrip";
@@ -12,6 +12,26 @@ type Capture =
   | { kind: "photo"; blob: Blob; url: string }
   | { kind: "video"; blob: Blob; url: string; seconds: number };
 
+function recommendedFilterForEmotion(e: EmotionId | null): FilterId {
+  // MVP 추천 매핑 (원하면 더 다듬자)
+  switch (e) {
+    case "impulse":
+      return "hot";
+    case "anger":
+      return "mono";
+    case "pleasure":
+      return "dream";
+    case "hurt":
+      return "mono";
+    case "anxiety":
+      return "cold";
+    case "void":
+      return "mono";
+    default:
+      return "none";
+  }
+}
+
 export default function Home() {
   const { user, ready } = useAuth();
 
@@ -22,9 +42,28 @@ export default function Home() {
   const [filterId, setFilterId] = useState<FilterId>("none");
   const [filterStrength, setFilterStrength] = useState(40);
 
+  // NEW: camera flip
+  const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
+
   const [cap, setCap] = useState<Capture | null>(null);
   const [caption, setCaption] = useState("");
   const [uploading, setUploading] = useState(false);
+
+  // NEW: emotion -> recommended filter auto-apply (only when emotion changes)
+  useEffect(() => {
+    const rec = recommendedFilterForEmotion(emotionId);
+    setFilterId(rec);
+
+    // 감정이 강할수록 필터 강도도 좀 올리는 느낌(선택)
+    setFilterStrength((prev) => {
+      const base = 25 + intensity * 12; // intensity 1..5 -> 37..85
+      // 사용자가 이미 강도 만지고 있다면 너무 튀지 않게 clamp
+      const next = Math.max(0, Math.min(100, base));
+      // emotion 바뀔 때만 살짝 맞춰주고 싶으면 prev보다 크거나 같게 유지:
+      return Math.round(next);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emotionId]);
 
   const filterCss = useMemo(() => {
     const f = FILTERS.find((x) => x.id === filterId)!;
@@ -32,10 +71,8 @@ export default function Home() {
   }, [filterId, filterStrength]);
 
   async function upload() {
-    console.log("ready:", ready, "user:", user?.id);
-    if (!ready) return;
-    if (!user) {
-      alert("로그인이 아직 준비되지 않았어요. 잠시 후 다시 시도해줘.");
+    if (!ready || !user) {
+      alert("세션이 아직 준비되지 않았어요. 잠시 후 다시 시도해줘.");
       return;
     }
     if (!cap) return;
@@ -53,7 +90,7 @@ export default function Home() {
         contentType: cap.blob.type,
         upsert: false,
       });
-      if (upErr) throw upErr;
+      if (upErr) throw new Error("Storage upload failed: " + upErr.message);
 
       const { error: dbErr } = await supabase.from("posts").insert({
         user_id: user.id,
@@ -65,7 +102,7 @@ export default function Home() {
         filter_strength: filterStrength,
         caption: caption.trim() ? caption.trim().slice(0, 20) : null,
       });
-      if (dbErr) throw dbErr;
+      if (dbErr) throw new Error("DB insert failed: " + dbErr.message);
 
       alert("업로드 완료. 피드로 이동합니다.");
       window.location.href = "/feed";
@@ -78,7 +115,7 @@ export default function Home() {
   }
 
   return (
-    <div style={{ padding: 16, maxWidth: 720, margin: "0 auto", display: "grid", gap: 14 }}>
+    <div style={{ padding: 16, maxWidth: 720, margin: "0 auto", display: "grid", gap: 12 }}>
       <EmotionOverlay
         open={overlayOpen}
         selectedEmotion={emotionId}
@@ -88,25 +125,43 @@ export default function Home() {
         onClose={() => setOverlayOpen(false)}
       />
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-        <div>
-          <div style={{ fontSize: 22, fontWeight: 900 }}>즉각 배출</div>
-          <div style={{ opacity: 0.75, marginTop: 4, fontSize: 13 }}>검열 없음 · 죄책감 없음 · 빠른 소비</div>
-          <div style={{ opacity: 0.65, marginTop: 4, fontSize: 12 }}>
-            {ready ? (user ? `세션: ${user.id.slice(0, 8)}… (익명)` : "세션 없음") : "세션 준비 중..."}
+      {/* 1) Camera */}
+      <CameraCapture
+        filterId={filterId}
+        filterStrength={filterStrength}
+        onCaptured={setCap}
+        facingMode={facingMode}
+        onFlip={() => setFacingMode((m) => (m === "user" ? "environment" : "user"))}
+      />
+
+      {/* 2) Emotion button row */}
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <button onClick={() => setOverlayOpen(true)} style={btn}>
+          {emotionId ? "감정 변경" : "감정 선택"}
+        </button>
+        <div style={{ opacity: 0.65, fontSize: 12 }}>
+          {ready ? (user ? `세션 ${user.id.slice(0, 8)}…` : "세션 없음") : "세션 준비 중..."}
+        </div>
+      </div>
+
+      {/* 3) Filters immediately visible */}
+      <div style={{ border: "1px solid rgba(255,255,255,0.14)", borderRadius: 18, padding: 12, display: "grid", gap: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+          <div style={{ fontWeight: 900 }}>필터</div>
+          <div style={{ opacity: 0.7, fontSize: 12 }}>
+            {emotionId ? `추천: ${labelFilter(filterId)}` : "감정 선택 시 추천됨"}
           </div>
         </div>
-        <button onClick={() => setOverlayOpen(true)} style={btnGhost}>
-          감정
-        </button>
+
+        <FilterStrip
+          filterId={filterId}
+          strength={filterStrength}
+          onFilter={setFilterId}
+          onStrength={setFilterStrength}
+        />
       </div>
 
-      <CameraCapture filterId={filterId} filterStrength={filterStrength} onCaptured={setCap} />
-
-      <div style={{ border: "1px solid rgba(255,255,255,0.14)", borderRadius: 18, padding: 12, display: "grid", gap: 12 }}>
-        <FilterStrip filterId={filterId} strength={filterStrength} onFilter={setFilterId} onStrength={setFilterStrength} />
-      </div>
-
+      {/* Preview + upload */}
       {cap && (
         <div style={{ border: "1px solid rgba(255,255,255,0.14)", borderRadius: 18, padding: 12, display: "grid", gap: 10 }}>
           <div style={{ fontWeight: 900 }}>미리보기</div>
@@ -131,12 +186,29 @@ export default function Home() {
             </button>
           </div>
 
-          <div style={{ opacity: 0.7, fontSize: 12 }}>* MVP: 영상 필터는 표시만 적용(파일 자체 변환은 나중에).</div>
+          <div style={{ opacity: 0.7, fontSize: 12 }}>
+            * MVP: 영상 필터는 표시만 적용(파일 자체 변환은 나중에).
+          </div>
         </div>
       )}
     </div>
   );
 }
+
+function labelFilter(id: FilterId) {
+  const f = FILTERS.find((x) => x.id === id);
+  return f?.label ?? id;
+}
+
+const btn: React.CSSProperties = {
+  borderRadius: 12,
+  padding: "10px 12px",
+  background: "rgba(255,255,255,0.10)",
+  color: "#fff",
+  border: "1px solid rgba(255,255,255,0.14)",
+  cursor: "pointer",
+  fontWeight: 900,
+};
 
 const btnPrimary: React.CSSProperties = {
   borderRadius: 12,
@@ -147,16 +219,6 @@ const btnPrimary: React.CSSProperties = {
   cursor: "pointer",
   fontWeight: 900,
   whiteSpace: "nowrap",
-};
-
-const btnGhost: React.CSSProperties = {
-  borderRadius: 12,
-  padding: "8px 10px",
-  background: "rgba(255,255,255,0.08)",
-  color: "#fff",
-  border: "1px solid rgba(255,255,255,0.12)",
-  cursor: "pointer",
-  fontWeight: 800,
 };
 
 const input: React.CSSProperties = {

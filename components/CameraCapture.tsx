@@ -7,18 +7,14 @@ type Capture =
   | { kind: "photo"; blob: Blob; url: string }
   | { kind: "video"; blob: Blob; url: string; seconds: number };
 
-function isSecureContextForCamera() {
-  // https or localhost 는 OK, 그 외 http(ip접속)는 대부분 모바일에서 막힘
-  if (typeof window === "undefined") return false;
-  const host = window.location.hostname;
-  const isLocalhost = host === "localhost" || host === "127.0.0.1";
-  return window.isSecureContext || isLocalhost;
-}
-
 export function CameraCapture(props: {
   filterId: FilterId;
   filterStrength: number;
   onCaptured: (cap: Capture | null) => void;
+
+  // NEW: flip control
+  facingMode: "user" | "environment";
+  onFlip: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -30,77 +26,53 @@ export function CameraCapture(props: {
   const [ready, setReady] = useState(false);
   const [recording, setRecording] = useState(false);
   const [seconds, setSeconds] = useState(0);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const filterCss = useMemo(() => {
     const f = FILTERS.find((x) => x.id === props.filterId)!;
     return f.css(props.filterStrength);
   }, [props.filterId, props.filterStrength]);
 
-  useEffect(() => {
-    let cancelled = false;
+  async function stopStream() {
+    if (timerRef.current) window.clearInterval(timerRef.current);
+    timerRef.current = null;
+    recorderRef.current = null;
+    chunksRef.current = [];
+    setRecording(false);
+    setSeconds(0);
 
-    async function init() {
-      try {
-        setErrorMsg(null);
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    setReady(false);
+  }
 
-        // 1) HTTPS/보안 컨텍스트 체크
-        if (!isSecureContextForCamera()) {
-          setErrorMsg(
-            "카메라 사용을 위해 HTTPS가 필요해요.\n\n" +
-              "로컬에서 폰으로 테스트 중이면:\n" +
-              "1) Vercel(또는 HTTPS 도메인)에 배포해서 접속하거나\n" +
-              "2) 개발용 HTTPS 프록시(ngrok/cloudflared)를 사용해줘."
-          );
-          return;
-        }
+  async function initStream() {
+    await stopStream();
 
-        // 2) 지원 여부 체크
-        const md = navigator?.mediaDevices;
-        if (!md?.getUserMedia) {
-          setErrorMsg(
-            "이 브라우저에서 카메라 API(getUserMedia)를 지원하지 않거나 권한이 막혔어요.\n\n" +
-              "iOS라면 Safari/Chrome 모두 HTTPS에서 동작해야 하고,\n" +
-              "설정에서 카메라 권한을 허용해야 해요."
-          );
-          return;
-        }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: props.facingMode },
+        audio: true,
+      });
 
-        const stream = await md.getUserMedia({
-          video: { facingMode: "user" },
-          audio: true,
-        });
-
-        if (cancelled) return;
-        streamRef.current = stream;
-
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-        }
-
-        setReady(true);
-      } catch (e: any) {
-        console.error(e);
-        setErrorMsg(
-          "카메라를 시작할 수 없어요.\n\n" +
-            "가능한 원인:\n" +
-            "- 카메라 권한 거부\n" +
-            "- HTTPS 아님\n" +
-            "- 다른 앱이 카메라 사용 중\n\n" +
-            `에러: ${e?.message ?? "unknown"}`
-        );
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
       }
+      setReady(true);
+    } catch (e) {
+      console.error(e);
+      alert("카메라/마이크 권한이 필요합니다.");
     }
+  }
 
-    init();
-
+  useEffect(() => {
+    initStream();
     return () => {
-      cancelled = true;
-      if (timerRef.current) window.clearInterval(timerRef.current);
-      streamRef.current?.getTracks().forEach((t) => t.stop());
+      stopStream();
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.facingMode]);
 
   function takePhoto() {
     const v = videoRef.current;
@@ -164,21 +136,63 @@ export function CameraCapture(props: {
     recorderRef.current?.stop();
   }
 
-  if (errorMsg) {
-    return (
-      <div style={panel}>
-        <div style={{ fontWeight: 900, marginBottom: 8 }}>카메라를 사용할 수 없음</div>
-        <pre style={{ whiteSpace: "pre-wrap", opacity: 0.9, margin: 0 }}>{errorMsg}</pre>
-      </div>
-    );
-  }
-
   return (
-    <div style={{ display: "grid", gap: 12 }}>
-      <div style={{ borderRadius: 18, overflow: "hidden", border: "1px solid rgba(255,255,255,0.14)", background: "#111" }}>
-        <video ref={videoRef} playsInline muted style={{ width: "100%", height: "auto", display: "block", filter: filterCss }} />
+    <div style={{ display: "grid", gap: 10 }}>
+      <div
+        style={{
+          borderRadius: 18,
+          overflow: "hidden",
+          border: "1px solid rgba(255,255,255,0.14)",
+          background: "#111",
+          position: "relative",
+        }}
+      >
+        <video
+          ref={videoRef}
+          playsInline
+          muted
+          style={{ width: "100%", height: "auto", display: "block", filter: filterCss }}
+        />
+
+        <button
+          onClick={props.onFlip}
+          style={{
+            position: "absolute",
+            right: 10,
+            top: 10,
+            borderRadius: 999,
+            padding: "8px 10px",
+            background: "rgba(0,0,0,0.45)",
+            color: "#fff",
+            border: "1px solid rgba(255,255,255,0.18)",
+            cursor: "pointer",
+            fontWeight: 900,
+          }}
+          title="전면/후면 전환"
+        >
+          🔁
+        </button>
+
+        {recording ? (
+          <div
+            style={{
+              position: "absolute",
+              left: 10,
+              top: 10,
+              borderRadius: 999,
+              padding: "6px 10px",
+              background: "rgba(255,0,0,0.20)",
+              border: "1px solid rgba(255,0,0,0.35)",
+              fontWeight: 900,
+              fontSize: 12,
+            }}
+          >
+            REC {seconds}s
+          </div>
+        ) : null}
       </div>
 
+      {/* Controls row (camera 바로 아래) */}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <button disabled={!ready || recording} onClick={takePhoto} style={btn}>
           📸 사진
@@ -186,11 +200,11 @@ export function CameraCapture(props: {
 
         {!recording ? (
           <button disabled={!ready} onClick={startRecording} style={btnPrimary}>
-            ⏺️ 영상 시작 (최대 20초)
+            ⏺️ 영상 시작
           </button>
         ) : (
           <button onClick={stopRecording} style={btnDanger}>
-            ⏹️ 정지 ({seconds}s)
+            ⏹️ 정지
           </button>
         )}
 
@@ -199,17 +213,12 @@ export function CameraCapture(props: {
         </button>
       </div>
 
-      <div style={{ opacity: 0.75, fontSize: 12 }}>영상은 5~20초. (20초 자동 제한)</div>
+      <div style={{ opacity: 0.75, fontSize: 12 }}>
+        영상은 5~20초 (20초 자동 제한)
+      </div>
     </div>
   );
 }
-
-const panel: React.CSSProperties = {
-  borderRadius: 18,
-  border: "1px solid rgba(255,255,255,0.14)",
-  background: "rgba(255,255,255,0.06)",
-  padding: 12,
-};
 
 const btn: React.CSSProperties = {
   borderRadius: 12,
@@ -218,7 +227,7 @@ const btn: React.CSSProperties = {
   color: "#fff",
   border: "1px solid rgba(255,255,255,0.14)",
   cursor: "pointer",
-  fontWeight: 800,
+  fontWeight: 900,
 };
 
 const btnPrimary: React.CSSProperties = { ...btn, background: "#fff", color: "#000", border: "none" };
