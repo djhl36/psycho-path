@@ -13,20 +13,19 @@ type Capture =
   | { kind: "video"; blob: Blob; url: string; seconds: number };
 
 function recommendedFilterForEmotion(e: EmotionId | null): FilterId {
-  // MVP 추천 매핑 (원하면 더 다듬자)
   switch (e) {
-    case "impulse":
-      return "hot";
+    case "joy":
+      return "dream";
+    case "sadness":
+      return "mono";
     case "anger":
       return "mono";
-    case "pleasure":
-      return "dream";
-    case "hurt":
-      return "mono";
-    case "anxiety":
+    case "fear":
       return "cold";
-    case "void":
+    case "disgust":
       return "mono";
+    case "surprise":
+      return "hot";
     default:
       return "none";
   }
@@ -168,7 +167,11 @@ export default function Home() {
 
           <div style={{ borderRadius: 14, overflow: "hidden", border: "1px solid rgba(255,255,255,0.12)" }}>
             {cap.kind === "photo" ? (
-              <img src={cap.url} alt="preview" style={{ width: "100%", display: "block" }} />
+              <img
+                src={cap.url}
+                alt="preview"
+                style={{ width: "100%", display: "block", filter: filterCss }}
+              />
             ) : (
               <video src={cap.url} controls playsInline style={{ width: "100%", display: "block", filter: filterCss }} />
             )}

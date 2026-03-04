@@ -83,7 +83,7 @@ export function CameraCapture(props: {
     canvas.height = v.videoHeight || 720;
 
     const ctx = canvas.getContext("2d")!;
-    ctx.filter = filterCss;
+    ctx.filter = "none"; // ✅ 원본 캡처
     ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
 
     canvas.toBlob((blob) => {

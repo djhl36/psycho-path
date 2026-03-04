@@ -19,7 +19,9 @@ export function DonutChart({ data }: { data: { label: string; value: number }[] 
         return (
           <circle
             key={d.label}
-            cx="60" cy="60" r={r}
+            cx="60"
+            cy="60"
+            r={r}
             fill="none"
             stroke="rgba(255,255,255,0.85)"
             strokeOpacity={0.18 + (i % 5) * 0.14}
@@ -38,11 +40,15 @@ export function DonutChart({ data }: { data: { label: string; value: number }[] 
 }
 
 export function BarList({ data }: { data: { label: string; value: number }[] }) {
-  const max = Math.max(...data.map(d => d.value), 1);
+  const max = Math.max(...data.map((d) => d.value), 1);
+
   return (
     <div style={{ display: "grid", gap: 8, width: "100%" }}>
       {data.map((d) => (
-        <div key={d.label} style={{ display: "grid", gridTemplateColumns: "72px 1fr 44px", gap: 10, alignItems: "center" }}>
+        <div
+          key={d.label}
+          style={{ display: "grid", gridTemplateColumns: "72px 1fr 44px", gap: 10, alignItems: "center" }}
+        >
           <div style={{ opacity: 0.9, fontWeight: 800 }}>{d.label}</div>
           <div style={{ height: 10, borderRadius: 999, background: "rgba(255,255,255,0.10)", overflow: "hidden" }}>
             <div style={{ height: "100%", width: `${(d.value / max) * 100}%`, background: "rgba(255,255,255,0.75)" }} />
@@ -50,6 +56,18 @@ export function BarList({ data }: { data: { label: string; value: number }[] }) 
           <div style={{ textAlign: "right", opacity: 0.85, fontWeight: 800 }}>{d.value}</div>
         </div>
       ))}
+    </div>
+  );
+}
+
+export function DominantEmotionSummary({ data }: { data: { label: string; value: number }[] }) {
+  const total = data.reduce((a, b) => a + b.value, 0) || 1;
+  const top = [...data].sort((a, b) => b.value - a.value)[0] ?? { label: "—", value: 0 };
+  const pct = Math.round((top.value / total) * 100);
+
+  return (
+    <div style={{ opacity: 0.9, fontWeight: 900 }}>
+      이번 주 지배 감정: {top.label} {pct}%
     </div>
   );
 }
